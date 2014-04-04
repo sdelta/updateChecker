@@ -60,7 +60,7 @@ addAuthor :: ReaderT Environment IO ()
 addAuthor = do
     knownAuthorsList <- asks envAuthors
     nick <- liftIO $ askStr "Enter author's nick: "
-    when (nick == "all") $ error "keyword all is reserved"
+    when (nick == "all") $ error "keyword 'all' is reserved"
     when (elem nick $ map authorNick knownAuthorsList) $ error "author with this nick already exists"
     url <- liftIO $ askStr "Enter author's page: "
     when (elem url $ map authorWebPage knownAuthorsList) $ error "author with this page already exists"    
