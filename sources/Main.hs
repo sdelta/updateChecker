@@ -6,8 +6,7 @@ import Control.Monad (when, unless, join)
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT, Reader, runReaderT, ask, asks)
 import Control.Applicative ((<$>), (<*>))
---import Control.Concurrent (forkIO)
---import System.Console.Readline (readline)
+import System.Console.Readline (readline)
 import System.IO.UTF8 (putStr)
 import Data.ConfigFile (ConfigParser)
 import Data.List (intersperse)
@@ -18,8 +17,6 @@ import FileInteraction
 import PrintMatrix
 import HTML (maxPageStateLength)
 
---import Debug.Trace
-
 data Environment = Environment {
     envArgs :: [String],
     envAuthors :: [Author],
@@ -28,19 +25,17 @@ data Environment = Environment {
 
 askStr :: String -> IO String
 askStr question = do
-    putStrLn question
-    getLine
-    {-maybeStr <- readline question
+--    putStrLn question
+--    getLine
+    maybeStr <- readline question
     case maybeStr of
         Nothing -> error "unexpected eof"
         Just str -> return str
-    -}
 
 checkUpdate :: ReaderT Environment IO ()
 checkUpdate = 
     let
         formatNPrintStr :: [String -> SpecificColor] -> (IO [String], [String]) -> IO()
---        formatNPrintStr colorScheme pair | trace "start another thread" False = undefined
         formatNPrintStr colorScheme pair = join (printResultColored colorScheme 2 <$> formatStr pair)
             where
                 formatStr :: (IO [String], [String]) -> IO [String]
@@ -54,8 +49,7 @@ checkUpdate =
         let ioAlignedMatrix = map (alignFields [maxPageStateLength] <$>) ioMatrix
         let pureMatrix = alignStrings' $ map (intersperse " " . snd) lst
         let colorScheme = colorPageState : repeat colorDefault
-        --trace "before forking" (return ())
-        liftIO $ mapM_ ({-forkIO . -}formatNPrintStr colorScheme) $ zip ioAlignedMatrix pureMatrix
+        liftIO $ mapM_ (formatNPrintStr colorScheme) $ zip ioAlignedMatrix pureMatrix
 
 listAuthors :: ReaderT Environment IO ()
 listAuthors = do 
