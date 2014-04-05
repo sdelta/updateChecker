@@ -5,3 +5,4 @@ hashable
 tagsoup
 configfile
 readline
+argparser
