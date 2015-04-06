@@ -9,11 +9,11 @@ module FileInteraction (
         saveAuthors) 
     where
 
-import Control.Monad (foldM)
+import Control.Monad (foldM, when)
 import Control.Applicative ((<$>), (<*>))
 import Data.ConfigFile
 import Data.Char (toLower)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, isJust)
 import Data.List (elemIndex)
 import Data.Either.Utils (forceEither)
 
@@ -45,13 +45,14 @@ appName = "updateChecker"
 configFileName = "." ++ appName ++ ".conf"
 authorsFile = "known_authors"
 
-checkAndUpdateCache :: Author -> IO PageState
+checkAndUpdateCache :: Author -> IO (PageState, String)
 checkAndUpdateCache author = 
     let 
         hashToCacheName h = cacheFolderName ++ [pathSeparator] ++ authorNick author ++ "." ++ show h
 
         rewriteCache :: String -> [BookDescription] -> IO ()
         rewriteCache cachedFile booksDesc = writeFile cachedFile $ show booksDesc
+
     in do
         page <- downloadPage $ authorWebPage author
         let cachedFile = hashToCacheName $ pageToPageTitleHash page
@@ -60,16 +61,13 @@ checkAndUpdateCache author =
         if isCacheExist
         then do
             cachedBooksDesc <- (read <$> readFile cachedFile) :: IO [BookDescription]
-            let cmp = compareBookLst cachedBooksDesc newBooksDesc
-            if  cmp /= Unchanged
-            then do 
-                rewriteCache cachedFile newBooksDesc
-                return cmp
-            else do 
-                return cmp
+            let (state, index) = compareBookLst cachedBooksDesc newBooksDesc
+            let url = authorWebPage author ++ getBookLinkByIndex newBooksDesc "" index
+            when (state /= Unchanged) $ rewriteCache cachedFile newBooksDesc
+            return (state, url)
         else do
             rewriteCache cachedFile newBooksDesc
-            return Inited
+            return (Inited, authorWebPage author)
 
 authorShowComponents :: Author -> [String]
 authorShowComponents author = [authorNick author, authorWebPage author]
@@ -91,8 +89,8 @@ urlOrNickToAuthorList knownAuthorsList str =
 
 processAuthorPage :: Author -> IO [String]
 processAuthorPage author = do
-    state <- printPageState <$> checkAndUpdateCache author
-    return (state : [authorNick author, authorWebPage author])
+    (state, url) <- checkAndUpdateCache author
+    return [printPageState state, authorNick author, url]
 
 readConfigFile :: IO ConfigParser 
 readConfigFile = 

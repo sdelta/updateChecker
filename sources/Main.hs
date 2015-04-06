@@ -14,8 +14,6 @@ import Data.ConfigFile (ConfigParser)
 import Data.List (intersperse)
 import Prelude hiding (putStr)
 
-import Debug.Trace
-
 -- internal modules
 import FileInteraction
 import PrintMatrix
