@@ -2,7 +2,6 @@ module PrintMatrix(
         SpecificColor,
         alignFields,
         alignStrings,
-        alignStrings',
         joinLists,
         colorPageState,
         colorDefault,
@@ -15,7 +14,7 @@ import Data.Maybe (fromJust,
                    fromMaybe, 
                    isJust)
 
-import HTML (PageState(..))
+import HTML (PageState(..), printPageState)
 
 type SpecificColor = Maybe Color
 
@@ -24,33 +23,24 @@ alignFields lengths strList = zipWith enlargeStr strList lengths
     where
         enlargeStr str len = str ++ replicate (len - length str) ' '
 
-alignStrings :: [Maybe Int] -> [[String]] -> [[String]]
-alignStrings precalcLengths matrix = 
-    let
-        lengthsMatrix = map (map length) matrix
-        lengthsList = map maximum $ transpose lengthsMatrix
-        quickLengthsList = zipWith fromMaybe lengthsList precalcLengths
-        getNSpaces n = replicate n ' '
-    in
-        map (alignFields quickLengthsList) matrix
+alignStrings :: [[String]] -> [[String]]
+alignStrings matrix = map (alignFields fieldsLength) matrix
+    where
+        fieldsLength = map (maximum . map length) $ transpose matrix
 
 joinLists :: Int -> [String] -> [String] -> [String]
 joinLists gapWidth list1 list2 = list1 ++ [gap] ++ list2
     where
         gap = replicate gapWidth ' '
 
-alignStrings' :: [[String]] -> [[String]]
-alignStrings' = alignStrings $ repeat Nothing
-
 isEqualPrefix prefix str = (take len str == prefix) && (drop len str == replicate (length str - len) ' ')
     where 
         len = length prefix
 
 colorPageState :: String -> SpecificColor
-colorPageState str | isEqualPrefix (show Inited) str    = Just Red
-                   | isEqualPrefix (show Unchanged) str = Just Yellow
-                   | isEqualPrefix (show Updated) str   = Just Green
-                   | otherwise = Nothing
+colorPageState str | isEqualPrefix (printPageState Inited) str    = Just Red
+                   | isEqualPrefix (printPageState Unchanged) str = Just Yellow
+                   | otherwise = Just Green
 
 colorDefault :: String -> SpecificColor
 colorDefault _ = Nothing

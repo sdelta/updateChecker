@@ -6,28 +6,23 @@ import Control.Monad (when, unless, join)
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT, Reader, runReaderT, ask, asks)
 import Control.Applicative ((<$>), (<*>))
+import Control.Concurrent (forkIO)
+import Control.Concurrent.Chan (Chan, newChan, readChan, writeChan)
 import System.Console.Readline (readline)
-import System.Console.ArgParser
-import System.IO.UTF8 (putStr)
+import System.IO (putStr)
 import Data.ConfigFile (ConfigParser)
 import Data.List (intersperse)
 import Prelude hiding (putStr)
+
+import Debug.Trace
 
 -- internal modules
 import FileInteraction
 import PrintMatrix
 import HTML (maxPageStateLength)
 
-data Command = Check | Add | Delete | List deriving Eq
-
-data CmdLnOptions = CmdLnOptions {
-    optCommand :: Command,
-    optVerbose :: Bool,
-    optAuthorName :: String
-}
-
 data Environment = Environment {
-    envArgs :: CmdLnOptions,
+    envArgs :: [String],
     envAuthors :: [Author],
     envConfig :: ConfigParser
 }
@@ -42,32 +37,40 @@ askStr question = do
 checkUpdate :: ReaderT Environment IO ()
 checkUpdate = 
     let
-        formatNPrintStr :: [String -> SpecificColor] -> (IO [String], [String]) -> IO()
-        formatNPrintStr colorScheme pair = join (printResultColored colorScheme 2 <$> formatStr pair)
-            where
-                formatStr :: (IO [String], [String]) -> IO [String]
-                formatStr (x, y) = joinLists 1 <$> x <*> return y 
+        printColoredLst :: Chan [String] -> IO ()
+        printColoredLst channel = do
+            strs <- readChan channel
+            printResultColored (colorPageState : repeat colorDefault) 2 strs
+
+        threadTemplate :: Chan [String] -> (IO [String]) -> IO ()
+        threadTemplate channel ioStrs = do
+            strs <- ioStrs
+            writeChan channel strs
     in do
-        arg <- asks (optAuthorName . envArgs)
+        arg <- (!! 1) <$> asks envArgs
         knownAuthorsList <- asks envAuthors
         let authors = urlOrNickToAuthorList knownAuthorsList arg
-        let lst = map processAuthorPage authors
-        let ioMatrix = map (\x -> sequence [fst x]) lst
-        let ioAlignedMatrix = map (alignFields [maxPageStateLength] <$>) ioMatrix
-        let pureMatrix = alignStrings' $ map (intersperse " " . snd) lst
-        let colorScheme = colorPageState : repeat colorDefault
-        liftIO $ mapM_ (formatNPrintStr colorScheme) $ zip ioAlignedMatrix pureMatrix
+        let maxNickLen = maximum $ map (length . authorNick) authors
+        let fieldSizeLst = [maxPageStateLength, maxNickLen, 0]
+
+        channel <- liftIO $ newChan
+
+        let matrix = map processAuthorPage authors
+        let alignedMatrix = map (intersperse " " <$>) $ map (alignFields fieldSizeLst <$>) matrix
+
+        threadLst <- liftIO $ sequence $ map (forkIO . threadTemplate channel) alignedMatrix
+        liftIO $ sequence_ $ map (const $ printColoredLst channel) threadLst
 
 listAuthors :: ReaderT Environment IO ()
 listAuthors = do 
-    resultMatrix <- alignStrings' <$> map (intersperse " " . authorShowComponents) <$> asks envAuthors
+    resultMatrix <- alignStrings <$> map (intersperse " " . authorShowComponents) <$> asks envAuthors
     liftIO $ mapM_ (printResultColored (repeat colorDefault) 2) resultMatrix
 
 addAuthor :: ReaderT Environment IO ()
 addAuthor = do
     knownAuthorsList <- asks envAuthors
     nick <- liftIO $ askStr "Enter author's nick: "
-    when (nick == "all") $ error "keyword 'all' is reserved"
+    when (nick == "all") $ error "keyword all is reserved"
     when (elem nick $ map authorNick knownAuthorsList) $ error "author with this nick already exists"
     url <- liftIO $ askStr "Enter author's page: "
     when (elem url $ map authorWebPage knownAuthorsList) $ error "author with this page already exists"    
@@ -75,41 +78,26 @@ addAuthor = do
 
 deleteAuthor :: ReaderT Environment IO ()
 deleteAuthor = do
-    nick <- asks (optAuthorName . envArgs)
+    nick <- (!! 1) <$> envArgs <$> ask
     knownAuthorsList <- asks envAuthors
     unless (elem nick $ map authorNick knownAuthorsList) $ error "author with this nick doesn't exist"
     liftIO $ saveAuthors $ filter (\x -> authorNick x /= nick) knownAuthorsList
     
 getEnvironment :: IO Environment
 getEnvironment = do
+    args <- getArgs
+    when (null args) (error "missing parameters")
+
     config <- readConfigFile
     prepareAppDirectory config
     knownAuthorsList <- readKnownAuthors
-    return $ Environment (CmdLnOptions List False []) knownAuthorsList config 
+    return $ Environment args knownAuthorsList config 
 
-optionParser :: IO (CmdLnInterface CmdLnOptions) 
-optionParser = 
-    mkSubParser 
-        [ 
-            ("check", mkDefaultApp (CmdLnOptions Check `parsedBy` boolFlag "--verbose" `andBy` optPos "all" "author") "check"),
-            ("list", mkDefaultApp ((flip (CmdLnOptions List) $ "error") `parsedBy` boolFlag "verbose") "list"),
-            ("add", mkDefaultApp (CmdLnOptions Add False `parsedBy` reqPos "author") "add"),
-            ("delete", mkDefaultApp (CmdLnOptions Delete False `parsedBy` reqPos "author") "delete")
-        ]
-
-setOptions :: Environment -> CmdLnOptions -> Environment
-setOptions env opt = Environment opt (envAuthors env) (envConfig env)
-
-chooseFunc :: Environment -> IO ()
-chooseFunc env = do
-    case optCommand $ envArgs env of
-        List -> flip runReaderT env $ listAuthors 
-        Add -> flip runReaderT env $ addAuthor
-        Delete -> flip runReaderT env $ deleteAuthor
-        Check -> flip runReaderT env $ checkUpdate
-
-main :: IO ()
 main = do
-    env <- getEnvironment 
-    interface <- optionParser
-    runApp interface (chooseFunc . setOptions env)
+    env <- getEnvironment
+    case head $ envArgs env of
+        "check" -> runReaderT checkUpdate env 
+        "list" -> runReaderT listAuthors env
+        "add" -> runReaderT addAuthor env
+        "delete" -> runReaderT deleteAuthor env
+        arg     -> error ("wrong argument: " ++ arg)

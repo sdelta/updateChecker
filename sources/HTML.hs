@@ -2,13 +2,16 @@ module HTML(
         downloadPage, 
         getBooksDesc, 
         pageToPageTitleHash, 
+        compareBookDesc,
+        printPageState,
+        compareBookLst,
+
         BookDescription, 
         PageState(..),
         maxPageStateLength)
     where
 
 import Control.Monad.State
-import Codec.Binary.UTF8.String (utf8Encode)
 import Control.Applicative ((<$>))
 import Data.Hashable (hash)
 import Text.HTML.TagSoup as HTML
@@ -24,15 +27,39 @@ data BookDescription = BookDescription {
     bookDescription :: String
 } deriving (Read, Show, Eq)
 
-data PageState = Inited | Updated | Unchanged deriving (Show, Eq, Bounded, Enum)
+-- in order of precendence of printing (firsts suppress following)
+data PageState = UpdatedBooksCount | 
+                UpdatedBookTitle | 
+                UpdatedBookSize |
+                UpdatedBookDesc |
+                Inited | 
+                Unchanged deriving (Show, Eq, Ord, Bounded, Enum)
+
+printPageState :: PageState -> String
+printPageState UpdatedBookTitle = "title changed"
+printPageState UpdatedBookSize = "size changed"
+printPageState UpdatedBookDesc = "description changed"
+printPageState UpdatedBooksCount = "books count changed"
+printPageState x = show x
+
+
+compareBookDesc :: BookDescription -> BookDescription -> PageState
+compareBookDesc a b | a == b = Unchanged
+compareBookDesc a b | bookTitle a /= bookTitle b = UpdatedBookTitle
+compareBookDesc a b | bookSize a /= bookSize b = UpdatedBookSize
+compareBookDesc a b = UpdatedBookDesc
+
+compareBookLst :: [BookDescription] -> [BookDescription] -> PageState
+compareBookLst a b | length a /= length b = UpdatedBooksCount
+compareBookLst a b = minimum $ zipWith compareBookDesc a b
 
 maxPageStateLength :: Int
-maxPageStateLength = maximum $ map (length . show) $ enumFrom (minBound :: PageState)
+maxPageStateLength = maximum $ map (length . printPageState) $ enumFrom (minBound :: PageState)
 
 downloadPage :: String -> IO HTMLPage
 downloadPage url = do
     rawPage <- simpleHTTP (getRequest url) >>= getResponseBody
-    return $ canonicalizeTags $ parseTags $ utf8Encode rawPage
+    return $ canonicalizeTags $ parseTags rawPage
 
 -- assume that calling dividePageToBookSubPages be after canonicalizeTags function
 dividePageToBookSubPages :: HTMLPage -> [HTMLPage]

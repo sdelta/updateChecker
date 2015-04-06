@@ -27,7 +27,7 @@ import System.Directory (doesFileExist,
                          setCurrentDirectory)
 
 
-import System.IO.UTF8 (readFile, 
+import System.IO (readFile, 
                        writeFile)
 
 import Prelude hiding (readFile, 
@@ -60,12 +60,13 @@ checkAndUpdateCache author =
         if isCacheExist
         then do
             cachedBooksDesc <- (read <$> readFile cachedFile) :: IO [BookDescription]
-            if cachedBooksDesc == newBooksDesc
-            then 
-                return Unchanged
-            else do 
+            let cmp = compareBookLst cachedBooksDesc newBooksDesc
+            if  cmp /= Unchanged
+            then do 
                 rewriteCache cachedFile newBooksDesc
-                return Updated
+                return cmp
+            else do 
+                return cmp
         else do
             rewriteCache cachedFile newBooksDesc
             return Inited
@@ -88,8 +89,10 @@ urlOrNickToAuthorList knownAuthorsList str =
             else
                 [Author str "unknown author"]
 
-processAuthorPage :: Author -> (IO String, [String])
-processAuthorPage author = (show <$> checkAndUpdateCache author, [authorNick author, authorWebPage author])
+processAuthorPage :: Author -> IO [String]
+processAuthorPage author = do
+    state <- printPageState <$> checkAndUpdateCache author
+    return (state : [authorNick author, authorWebPage author])
 
 readConfigFile :: IO ConfigParser 
 readConfigFile = 
