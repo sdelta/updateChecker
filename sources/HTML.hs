@@ -1,84 +1,54 @@
 module HTML(
-        downloadPage, 
-        getBooksDesc, 
-        pageToPageTitleHash, 
-        compareBookDesc,
-        printPageState,
-        compareBookLst,
-        getBookLinkByIndex,
-
-        BookDescription, 
-        PageState(..),
-        maxPageStateLength)
+        Book(..), 
+        AuthorPage(..),
+        emptyPage,
+        downloadAuthorPage)
     where
 
 import Control.Monad.State
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), (<*>))
 import Data.Hashable (hash)
 import Data.Maybe (isJust, fromJust)
-import Text.HTML.TagSoup as HTML
+import Data.List (sort)
+import Text.HTML.TagSoup as TG
 import Network.HTTP (simpleHTTP, 
                      getRequest, 
                      getResponseBody)
 
-type HTMLPage = [Tag String]
+data AuthorPage = AuthorPage {
+    books :: [Book],
+    pageHash :: Int,
+    url :: String
+} deriving (Read, Show)
 
-data BookDescription = BookDescription {
+emptyPage :: AuthorPage
+emptyPage = AuthorPage [] 0 "empty author page url"
+
+data Book = Book {
     bookTitle :: String,
     bookLink :: String,
     bookSize  :: Int,
-    bookDescription :: String
-} deriving (Read, Show, Eq)
+    bookDescription :: [String]
+} deriving (Read, Show, Eq, Ord)
 
--- in order of precendence of printing (firsts suppress following)
-data PageState = UpdatedBooksCount | 
-                UpdatedBookTitle | 
-                UpdatedBookLink |
-                UpdatedBookSize |
-                UpdatedBookDesc |
-                Inited | 
-                Unchanged deriving (Show, Eq, Ord, Bounded, Enum)
+type HTMLPage = [Tag String]
 
-getBookLinkByIndex :: [BookDescription] -> String -> Maybe Int -> String
-getBookLinkByIndex books _ index | isJust index = bookLink (books !! fromJust index)
-getBookLinkByIndex _ defValue _ = defValue
-
-printPageState :: PageState -> String
-printPageState UpdatedBookTitle = "title changed"
-printPageState UpdatedBookLink = "link changed"
-printPageState UpdatedBookSize = "size changed"
-printPageState UpdatedBookDesc = "description changed"
-printPageState UpdatedBooksCount = "books count changed"
-printPageState x = show x
-
-
-compareBookDesc :: BookDescription -> BookDescription -> PageState
-compareBookDesc a b | a == b = Unchanged
-compareBookDesc a b | bookTitle a /= bookTitle b = UpdatedBookTitle
-compareBookDesc a b | bookLink a /= bookLink b = UpdatedBookLink
-compareBookDesc a b | bookSize a /= bookSize b = UpdatedBookSize
-compareBookDesc a b = UpdatedBookDesc
-
-compareBookLst :: [BookDescription] -> [BookDescription] -> (PageState, Maybe Int)
-compareBookLst a b | length a /= length b = (UpdatedBooksCount, Nothing)
-compareBookLst a b = discardIndexIfUnchanged $ minimum $ addNumeration $ zipWith compareBookDesc a b
+downloadAuthorPage :: String -> IO AuthorPage
+downloadAuthorPage url = AuthorPage <$> descriptions <*> hash <*> return url
     where
-        addNumeration lst = zip lst $ map Just [0..]
+        page = downloadPage url
+        descriptions = sort <$> map subpageToBook <$> dividePageToBookSubPages <$> page
+        hash = pageToPageTitleHash <$> page
 
-        discardIndexIfUnchanged (a, b) | a == Unchanged = (a, Nothing)
-        discardIndexIfUnchanged (a, b) = (a, b)
+pageToPageTitleHash :: HTMLPage -> Int
+pageToPageTitleHash page = flip evalState page $ do
+    modify (tail . dropWhile (~/= "<h3>"))
+    modify $ takeWhile (~/= "</h3>")
+    pageTitle <- concatMap fromTagText <$> filter isTagText <$> get
+    return $ abs $ hash pageTitle
 
-maxPageStateLength :: Int
-maxPageStateLength = maximum $ map (length . printPageState) $ enumFrom (minBound :: PageState)
-
-downloadPage :: String -> IO HTMLPage
-downloadPage url = do
-    rawPage <- simpleHTTP (getRequest url) >>= getResponseBody
-    return $ canonicalizeTags $ parseTags rawPage
-
--- assume that calling dividePageToBookSubPages be after canonicalizeTags function
 dividePageToBookSubPages :: HTMLPage -> [HTMLPage]
-dividePageToBookSubPages page = filter isBeginingOfDesc $ HTML.sections (~== TagOpen "dl" []) page
+dividePageToBookSubPages page = filter isBeginingOfDesc $ TG.sections (~== TagOpen "dl" []) page
     where
         beginingOfDesc :: HTMLPage
         beginingOfDesc = [TagOpen "dl" [], TagOpen "dt" [], TagOpen "li" []]
@@ -86,8 +56,8 @@ dividePageToBookSubPages page = filter isBeginingOfDesc $ HTML.sections (~== Tag
         isBeginingOfDesc :: HTMLPage -> Bool
         isBeginingOfDesc list = take (length beginingOfDesc) list == beginingOfDesc
 
-pageToBookDescription :: HTMLPage -> BookDescription
-pageToBookDescription tagList = 
+subpageToBook :: HTMLPage -> Book
+subpageToBook tagList = 
     let
         extractText :: HTMLPage -> String
         extractText page = concatMap fromTagText $ filter isTagText page
@@ -101,16 +71,10 @@ pageToBookDescription tagList =
             size <- (read <$> init <$> fromTagText <$> head <$> get) :: State HTMLPage Int
             modify $ dropWhile (~/= "<dd>")
             modify $ takeWhile (~/= "</dl>")
-            description <- extractText <$> get
-            return $ BookDescription title link size description
+            description <- lines <$> extractText <$> get
+            return $ Book title link size description
 
-getBooksDesc :: HTMLPage -> [BookDescription]
-getBooksDesc page = map pageToBookDescription $ dividePageToBookSubPages page
-
--- assume that calling pageTagsToPageTitleHash be after canonicalizeTags function
-pageToPageTitleHash :: HTMLPage -> Int
-pageToPageTitleHash page = flip evalState page $ do
-    modify (tail . dropWhile (~/= "<h3>"))
-    modify $ takeWhile (~/= "</h3>")
-    pageTitle <- concatMap fromTagText <$> filter isTagText <$> get
-    return $ abs $ hash pageTitle
+downloadPage :: String -> IO HTMLPage
+downloadPage url = do
+    rawPage <- simpleHTTP (getRequest url) >>= getResponseBody
+    return $ canonicalizeTags $ parseTags rawPage

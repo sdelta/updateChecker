@@ -1,17 +1,15 @@
 module FileInteraction (
         Author(..),
-        readConfigFile,
         prepareAppDirectory,
         readKnownAuthors,
         urlOrNickToAuthorList,
-        processAuthorPage,
+        downloadAndUpdateCache,
         authorShowComponents,
         saveAuthors) 
     where
 
 import Control.Monad (foldM, when)
 import Control.Applicative ((<$>), (<*>))
-import Data.ConfigFile
 import Data.Char (toLower)
 import Data.Maybe (fromJust, isJust)
 import Data.List (elemIndex)
@@ -24,7 +22,8 @@ import System.Directory (doesFileExist,
                          getAppUserDataDirectory, 
                          createDirectoryIfMissing,
                          getHomeDirectory,
-                         setCurrentDirectory)
+                         setCurrentDirectory,
+                         renameFile)
 
 
 import System.IO (readFile, 
@@ -42,32 +41,32 @@ data Author = Author {
 
 cacheFolderName = "cache"
 appName = "updateChecker"
-configFileName = "." ++ appName ++ ".conf"
+appDir = "." ++ appName
 authorsFile = "known_authors"
 
-checkAndUpdateCache :: Author -> IO (PageState, String)
-checkAndUpdateCache author = 
+downloadAndUpdateCache :: Author -> IO (AuthorPage, AuthorPage)
+downloadAndUpdateCache author = 
     let 
-        hashToCacheName h = cacheFolderName ++ [pathSeparator] ++ authorNick author ++ "." ++ show h
+        pageToCacheName :: AuthorPage -> String
+        pageToCacheName page = cacheFolderName ++ [pathSeparator] ++ authorNick author ++ "." ++ (show $ pageHash page)
 
-        rewriteCache :: String -> [BookDescription] -> IO ()
-        rewriteCache cachedFile booksDesc = writeFile cachedFile $ show booksDesc
+        rewriteCache :: String -> AuthorPage -> IO ()
+        rewriteCache cachedFile page = writeFile cachedFile $ show page
 
     in do
-        page <- downloadPage $ authorWebPage author
-        let cachedFile = hashToCacheName $ pageToPageTitleHash page
+        page <- downloadAuthorPage $ authorWebPage author
+        let cachedFile = pageToCacheName page
         isCacheExist <- doesFileExist cachedFile
-        let newBooksDesc = getBooksDesc page
-        if isCacheExist
-        then do
-            cachedBooksDesc <- (read <$> readFile cachedFile) :: IO [BookDescription]
-            let (state, index) = compareBookLst cachedBooksDesc newBooksDesc
-            let url = authorWebPage author ++ getBookLinkByIndex newBooksDesc "" index
-            when (state /= Unchanged) $ rewriteCache cachedFile newBooksDesc
-            return (state, url)
-        else do
-            rewriteCache cachedFile newBooksDesc
-            return (Inited, authorWebPage author)
+        cachedPage <- if isCacheExist
+            then do
+                cachedAuthorPage <- (read <$> readFile cachedFile) :: IO AuthorPage
+                renameFile cachedFile (cachedFile ++ ".old")
+                rewriteCache cachedFile page 
+                return cachedAuthorPage
+            else do
+                rewriteCache cachedFile page 
+                return emptyPage 
+        return (page, cachedPage)
 
 authorShowComponents :: Author -> [String]
 authorShowComponents author = [authorNick author, authorWebPage author]
@@ -87,38 +86,9 @@ urlOrNickToAuthorList knownAuthorsList str =
             else
                 [Author str "unknown author"]
 
-processAuthorPage :: Author -> IO [String]
-processAuthorPage author = do
-    (state, url) <- checkAndUpdateCache author
-    return [printPageState state, authorNick author, url]
-
-readConfigFile :: IO ConfigParser 
-readConfigFile = 
-    let
-        getDefaultOptionsValues :: IO [(OptionSpec, String)]
-        getDefaultOptionsValues = do
-            appFolder <- getAppUserDataDirectory appName 
-            return [("app_folder_location", appFolder)]
-
-        createConfigParser :: [(OptionSpec, String)] -> ConfigParser
-        createConfigParser optionsList = forceEither $ foldM foldFunction emptyCP optionsList
-            where
-                foldFunction ::  ConfigParser -> (OptionSpec, String) -> Either CPError ConfigParser
-                foldFunction configParser (option, value) = set configParser "DEFAULT" (map toLower option) value
-    in do
-        configFileLocation <- combine <$> getHomeDirectory <*> return configFileName
-        isConfigFileExist <- doesFileExist configFileLocation
-        defaultConfigParser <- createConfigParser <$> getDefaultOptionsValues
-        if isConfigFileExist
-        then do
-            newConfigParser <- forceEither <$> readfile emptyCP configFileLocation
-            return $ merge defaultConfigParser newConfigParser
-        else
-            return defaultConfigParser
-
-prepareAppDirectory :: ConfigParser -> IO ()
-prepareAppDirectory configParser = do
-    let targetDir = forceEither $ get configParser "DEFAULT" $ map toLower "app_folder_location"
+prepareAppDirectory :: IO ()
+prepareAppDirectory = do
+    targetDir <- combine <$> getHomeDirectory <*> return appDir 
     createDirectoryIfMissing False targetDir
     setCurrentDirectory targetDir
     createDirectoryIfMissing False cacheFolderName

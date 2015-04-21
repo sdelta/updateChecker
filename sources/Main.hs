@@ -16,13 +16,13 @@ import Prelude hiding (putStr)
 
 -- internal modules
 import FileInteraction
-import PrintMatrix
-import HTML (maxPageStateLength)
+import Reporting
+import Printable (Printable)
+import DrawReport
 
 data Environment = Environment {
     envArgs :: [String],
-    envAuthors :: [Author],
-    envConfig :: ConfigParser
+    envAuthors :: [Author]
 }
 
 askStr :: String -> IO String
@@ -35,34 +35,39 @@ askStr question = do
 checkUpdate :: ReaderT Environment IO ()
 checkUpdate = 
     let
-        printColoredLst :: Chan [String] -> IO ()
+        printColoredLst :: Chan Printable -> IO ()
         printColoredLst channel = do
-            strs <- readChan channel
-            printResultColored (colorPageState : repeat colorDefault) 2 strs
+            printable <- readChan channel
+            printResultColored printable
 
-        threadTemplate :: Chan [String] -> (IO [String]) -> IO ()
-        threadTemplate channel ioStrs = do
-            strs <- ioStrs
-            writeChan channel strs
+        threadTemplate :: Chan Printable -> (IO Printable) -> IO ()
+        threadTemplate channel ioPrintable = do
+            printable <- ioPrintable
+            writeChan channel printable
+
+        processAuthorPage :: Int -> Author -> IO Printable
+        processAuthorPage maxNickLen (Author link nick) = do
+            (newPage, oldPage) <- downloadAndUpdateCache $ Author link nick
+            let shortReport = summarize $ reportDifferencies oldPage newPage
+            return $ summaryToPrintable (nick, maxNickLen) shortReport
+         
     in do
         arg <- (!! 1) <$> asks envArgs
         knownAuthorsList <- asks envAuthors
         let authors = urlOrNickToAuthorList knownAuthorsList arg
         let maxNickLen = maximum $ map (length . authorNick) authors
-        let fieldSizeLst = [maxPageStateLength, maxNickLen, 0]
 
         channel <- liftIO $ newChan
 
-        let matrix = map processAuthorPage authors
-        let alignedMatrix = map (intersperse " " <$>) $ map (alignFields fieldSizeLst <$>) matrix
+        let printableLst = map (processAuthorPage maxNickLen) authors
 
-        threadLst <- liftIO $ sequence $ map (forkIO . threadTemplate channel) alignedMatrix
+        threadLst <- liftIO $ sequence $ map (forkIO . threadTemplate channel) printableLst 
         liftIO $ sequence_ $ map (const $ printColoredLst channel) threadLst
 
 listAuthors :: ReaderT Environment IO ()
 listAuthors = do 
-    resultMatrix <- alignStrings <$> map (intersperse " " . authorShowComponents) <$> asks envAuthors
-    liftIO $ mapM_ (printResultColored (repeat colorDefault) 2) resultMatrix
+    matrix <- map (authorShowComponents) <$> asks envAuthors
+    liftIO $ printUncoloredMatrix matrix 
 
 addAuthor :: ReaderT Environment IO ()
 addAuthor = do
@@ -85,11 +90,9 @@ getEnvironment :: IO Environment
 getEnvironment = do
     args <- getArgs
     when (null args) (error "missing parameters")
-
-    config <- readConfigFile
-    prepareAppDirectory config
+    prepareAppDirectory 
     knownAuthorsList <- readKnownAuthors
-    return $ Environment args knownAuthorsList config 
+    return $ Environment args knownAuthorsList
 
 main = do
     env <- getEnvironment
