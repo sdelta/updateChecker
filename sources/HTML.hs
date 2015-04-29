@@ -9,7 +9,6 @@ import Control.Monad.State
 import Control.Applicative ((<$>), (<*>))
 import Data.Hashable (hash)
 import Data.Maybe (isJust, fromJust)
-import Data.List (sort)
 import Text.HTML.TagSoup as TG
 import Network.HTTP (simpleHTTP, 
                      getRequest, 
@@ -37,7 +36,7 @@ downloadAuthorPage :: String -> IO AuthorPage
 downloadAuthorPage url = AuthorPage <$> descriptions <*> hash <*> return url
     where
         page = downloadPage url
-        descriptions = sort <$> map subpageToBook <$> dividePageToBookSubPages <$> page
+        descriptions = map subpageToBook <$> dividePageToBookSubPages <$> page
         hash = pageToPageTitleHash <$> page
 
 pageToPageTitleHash :: HTMLPage -> Int
