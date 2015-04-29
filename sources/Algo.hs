@@ -67,8 +67,8 @@ levenshteinDist [] l2 = length l2
 levenshteinDist l1 [] = length l1
 levenshteinDist l1 l2 = U.last $ V.last $ levenshteinMatrix l1 l2
 
--- should NOT be called if on of arguments is []
 levenshteinMatrix :: Eq a => [a] -> [a] -> V.Vector (U.Vector Int)
+levenshteinMatrix l1 l2 | null l1 || null l2 = error "levenshteinMatrix should NOT be called with empty lists"
 levenshteinMatrix l1 l2 = V.unfoldrN (V.length a1) (uncurry getNext) (0, zerosVector)
     where
         a1 = V.fromList l1
@@ -97,8 +97,8 @@ levenshteinMatrix l1 l2 = V.unfoldrN (V.length a1) (uncurry getNext) (0, zerosVe
                         replaceOrStay = zeroIfEqual + getter (curInd - 1) v
                     in 
                         if U.null g
-                        then min replaceOrStay (U.head v + 1)
-                        else min replaceOrStay $ min (U.last g + 1) ((v U.! curInd) + 1)
+                        then min replaceOrStay (U.unsafeHead v + 1)
+                        else min replaceOrStay $ min (U.unsafeLast g + 1) ((v U.! curInd) + 1)
 
 -- tests
 

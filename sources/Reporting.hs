@@ -8,6 +8,8 @@ module Reporting (ComparisionReport(..),
 
 import Data.Maybe (catMaybes)
 import Data.Function (on)
+import Data.List (sortBy)
+import Data.Ord (Ordering, comparing)
 
 import HTML(Book(..), 
         AuthorPage(..))
@@ -20,8 +22,6 @@ import Algo (Recipe,
 
 import Test.QuickCheck (Arbitrary(..),
                         arbitraryBoundedEnum)
-
-import Debug.Trace
 
 data ComparisionReport = Report {
     baseLink :: String,
@@ -101,23 +101,55 @@ reportDifferencies (AuthorPage oldBooks _ _) (AuthorPage newBooks _ url) = repor
 
         isNotInTheList lst x = not (x `elem` lst)
 
-        -- coupledBooks may contain sublist [(b1, b2), (b3, b2)]
-        -- if it is inappropriate than coupledBooks should be rewrited
         coupledBooks :: [(Book, Book)]
-        coupledBooks = catMaybes $ map (findCoupleIndex $ oldBooks) $ newBooks
+        coupledBooks = findCoupled newBooks oldBooks 
 
         -- if isBooksTheSameProbability b1 b2 < probOfImpossible then b1 and b2 are different books
         probOfImpossible :: Double
         probOfImpossible = 0.35
 
-        findCoupleIndex :: [Book] -> Book -> Maybe (Book, Book)
-        findCoupleIndex [] _ = Nothing
-        findCoupleIndex lst b = 
-            let
-                (prob, index) = maximum $ flip zip [0..] $ map (isBooksTheSameProbability b) lst
-            in if prob < probOfImpossible
-                then Nothing
-                else Just (b, lst !! index)
+        findCoupled :: [Book] -> [Book] -> [(Book, Book)]
+        findCoupled l1 l2 = findCoupled' 0 l1 $ zip l2 [0..]
+            where
+                findCoupled' :: Int -> [Book] -> [(Book, Int)] -> [(Book, Book)]
+                findCoupled' ind [] _ = []
+                findCoupled' ind _ [] = []
+                findCoupled' ind (h:t) l = result
+                    where
+                        result = if prob < probOfImpossible
+                            then findCoupled' (ind + 1) t l
+                            else (h, book) : findCoupled' (ind + 1) t (except (book, savedIndex) l)
+
+                        (prob, book, savedIndex) = getCouple h $ reorder ind l
+
+                        reorder :: Int -> [(a, Int)] -> [(a, Int)]
+                        reorder ind lst = sortBy sortingPred lst
+                            where
+                                sortingPred :: (a, Int) -> (a, Int) -> Ordering
+                                sortingPred (_, a) (_, b) = comparing (\x -> abs (x - ind)) a b
+
+                        except :: Eq a => a -> [a] -> [a]
+                        except x lst = filter (x/=) lst
+
+        getCouple :: Book -> [(Book, Int)] -> (Double, Book, Int)
+        getCouple _ [] = error "getCouple should NOT be called with [] argument"
+        getCouple b lst = (prob, book, savedIndex)
+            where
+                ((book, savedIndex), prob) = findPercentMaximum $ zip lst $ map (isBooksTheSameProbability b . fst) lst
+
+                findPercentMaximum :: [(a, Double)] -> (a, Double)
+                findPercentMaximum [] = error "findPercentMaximum [] is bad idea"
+                findPercentMaximum (x:xs) = findPercentMaximum' x xs
+                    where
+                        findPercentMaximum' :: (a, Double) -> [(a, Double)] -> (a, Double)
+                        findPercentMaximum' x [] = x
+                        findPercentMaximum' x@(a, p) _ | moreOrEqual p 1.00 = x
+                        findPercentMaximum' x@(a, p) (h:t) | snd h > p = findPercentMaximum' h t
+
+                        moreOrEqual :: Double -> Double -> Bool
+                        moreOrEqual a b = a - b >= (-1 * eps)
+                            where
+                                eps = 0.000001
 
 reportBookDifferencies :: Book -> Book -> BookDiff
 reportBookDifferencies old new = BookDiff title link size desc

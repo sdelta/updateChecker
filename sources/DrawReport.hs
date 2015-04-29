@@ -93,6 +93,7 @@ uncolored :: String -> PrintableData
 uncolored str = PrintableData str Nothing
 
 
+--tests
 prop_pageStateToAlignedPrintable :: PageState -> PageState -> Bool
 prop_pageStateToAlignedPrintable s1 s2 = f s1 == f s2
     where
